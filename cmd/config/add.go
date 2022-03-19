@@ -1,96 +1,44 @@
 package config
 
 import (
-	// context "context"
-	// "fmt"
-	// "github.com/argoproj-labs/multi-cluster-kubernetes/api/config"
 	"context"
 	"fmt"
+	"log"
 
-	"github.com/argoproj/pkg/errors"
-	"github.com/spf13/cobra"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+
 	"github.com/danielm-codefresh/argo-multi-cluster/api/clusterauth"
+	"github.com/danielm-codefresh/argo-multi-cluster/api/common"
+	// apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
-	// "k8s.io/client-go/kubernetes"
-	// "k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	// "k8s.io/client-go/util/homedir"
-	// "path/filepath"
 )
-
-// func NewAddCommand() *cobra.Command {
-// 	var (
-// 		kubeconfig string
-// 		namespace  string
-// 	)
-// 	cmd := &cobra.Command{
-// 		Use: "add NAME [CONTEXT_NAME]",
-// 		RunE: func(cmd *cobra.Command, args []string) error {
-// 			ctx := context.Background()
-//
-// 			startingConfig, err := clientcmd.NewDefaultPathOptions().GetStartingConfig()
-// 			if err != nil {
-// 				return err
-// 			}
-//
-// 			name := args[0]
-// 			if len(args) == 2 {
-// 				startingConfig.CurrentContext = args[1]
-// 			}
-//
-// 			clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{})
-// 			restConfig, err := clientConfig.ClientConfig()
-// 			if err != nil {
-// 				return err
-// 			}
-//
-// 			// secretsInterface := kubernetes.NewForConfigOrDie(restConfig).CoreV1().Secrets("").List(metav1.ListOptions{LabelSelector: "argo-secret-type=cluster"})
-// 			secretsInterface := kubernetes.NewForConfigOrDie(restConfig).CoreV1().Secrets("")
-//
-// 			err = clientcmdapi.MinifyConfig(startingConfig)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			err = config.New(secretsInterface).Add(ctx, name, startingConfig)
-// 			if err != nil {
-// 				return err
-// 			}
-//
-// 			fmt.Printf("config %q from context %q added\n", name, startingConfig.CurrentContext)
-//
-// 			return nil
-// 		},
-// 	}
-// 	// cmd.Flags().StringVar(&kubeconfig, "kubeconfig", filepath.Join(homedir.HomeDir(), ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-// 	// cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "namespace")
-// 	return cmd
-// }
-
 
 func NewClusterAddCommand() *cobra.Command {
 	var (
-		kubeconfig string
-		namespace  string
+		namespaces []string
 	)
 	cmd := &cobra.Command{
 		Use: "add NAME [CONTEXT_NAME]",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-
 			startingConfig, err := clientcmd.NewDefaultPathOptions().GetStartingConfig()
 			if err != nil {
 				return err
 			}
 
-			name := args[0]
-			if len(args) == 2 {
-				startingConfig.CurrentContext = args[1]
+			contextName := args[0]
+			clstContext := startingConfig.Contexts[contextName]
+			if clstContext == nil {
+				log.Fatalf("Context %s does not exist in kubeconfig", contextName)
 			}
 
-			clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}, &clientcmd.ConfigOverrides{})
+			overrides := clientcmd.ConfigOverrides{
+				Context: *clstContext,
+			}
+			clientConfig := clientcmd.NewDefaultClientConfig(*startingConfig, &overrides)
 			restConfig, err := clientConfig.ClientConfig()
 			if err != nil {
 				return err
@@ -98,33 +46,39 @@ func NewClusterAddCommand() *cobra.Command {
 
 			// Install RBAC resources for managing the cluster
 			clientset, err := kubernetes.NewForConfig(restConfig)
-			errors.CheckError(err)
-			managerBearerToken, err := clusterauth.InstallClusterManagerRBAC(clientset, clusterOpts.SystemNamespace, clusterOpts.Namespaces)
-			errors.CheckError(err)
+			if err != nil {
+				return err
+			}
 
-			fmt.Printf("config %q from context %q added\n", name, startingConfig.CurrentContext)
+			managerBearerToken, err := clusterauth.InstallClusterManagerRBAC(clientset, common.DefaultSystemNamespace, namespaces)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("BearerToken: %s", managerBearerToken)
+			
+			cluster := clusterauth.NewCluster(contextName, restConfig, managerBearerToken)
+			secret, err := clusterauth.ClusterToSecret(*cluster)
+			if err != nil {
+				return err
+			}
+
+			clientConfig = clientcmd.NewDefaultClientConfig(*startingConfig, nil)
+			restConfig, err = clientConfig.ClientConfig()
+			clientset, err = kubernetes.NewForConfig(restConfig)
+			if err != nil {
+				return err
+			}
+
+			_, err = clientset.CoreV1().Secrets(common.DefaultSystemNamespace).Create(context.Background(), secret, metav1.CreateOptions{})
+			if err != nil {
+				return err
+			}
 
 			return nil
 		},
 	}
-	// cmd.Flags().StringVar(&kubeconfig, "kubeconfig", filepath.Join(homedir.HomeDir(), ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	// cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "namespace")
-	return cmd
-}
 
-// AskToProceed prompts the user with a message (typically a yes or no question) and returns whether
-// or not they responded in the affirmative or negative.
-func AskToProceed(message string) bool {
-	for {
-		fmt.Print(message)
-		reader := bufio.NewReader(os.Stdin)
-		proceedRaw, err := reader.ReadString('\n')
-		errors.CheckError(err)
-		switch strings.ToLower(strings.TrimSpace(proceedRaw)) {
-		case "y", "yes":
-			return true
-		case "n", "no":
-			return false
-		}
-	}
+	cmd.Flags().StringArrayVar(&namespaces, "namespaces", nil, "List of namespaces which are allowed to manage")
+	return cmd
 }
