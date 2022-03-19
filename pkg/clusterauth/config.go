@@ -8,10 +8,9 @@ import (
 	"net/url"
 	"strings"
 
-	// "fmt"
 	"io/ioutil"
 
-	"github.com/danielm-codefresh/argo-multi-cluster/api/common"
+	"github.com/danielm-codefresh/argo-multi-cluster/pkg/common"
 	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"

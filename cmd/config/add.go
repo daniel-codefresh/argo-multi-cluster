@@ -7,8 +7,9 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
-	"github.com/danielm-codefresh/argo-multi-cluster/api/clusterauth"
-	"github.com/danielm-codefresh/argo-multi-cluster/api/common"
+	"github.com/danielm-codefresh/argo-multi-cluster/pkg/clusterauth"
+	"github.com/danielm-codefresh/argo-multi-cluster/pkg/common"
+
 	// apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
