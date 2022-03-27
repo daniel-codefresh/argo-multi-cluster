@@ -134,8 +134,10 @@ func (c *Cluster) RESTConfig() *rest.Config {
 }
 
 func GetClusterSecret(clientset kubernetes.Interface, name string) (*apiv1.Secret, error) {
-	labelSelector := fields.ParseSelectorOrDie(common.LabelKeySecretType + "=" + common.LabelValueSecretTypeCluster)
-	secrets, err := clientset.CoreV1().Secrets("").List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector.String()})
+	defaultLabelSelector := fields.ParseSelectorOrDie(common.LabelKeySecretType + "=" + common.LabelValueSecretTypeCluster)
+	argoCDLabelSelector := fields.ParseSelectorOrDie(common.LabelKeyArgoCDSecretType + "=" + common.LabelValueSecretTypeCluster)
+
+	secrets, err := getSecretsWithLabel(clientset, defaultLabelSelector)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +148,19 @@ func GetClusterSecret(clientset kubernetes.Interface, name string) (*apiv1.Secre
 		}
 	}
 
-	return nil, fmt.Errorf("Cluster secret was not found")
+	// If no secrets with the default argo label were found try and look for secrets with the argocd label
+	secrets, err = getSecretsWithLabel(clientset, argoCDLabelSelector)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, secret := range secrets.Items {
+		if string(secret.Data["name"]) == name {
+			return &secret, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Cluster secret %s was not found", name)
 }
 
 func uriToSecretName(uriType, uri string) (string, error) {
@@ -158,4 +172,13 @@ func uriToSecretName(uriType, uri string) (string, error) {
 	_, _ = h.Write([]byte(uri))
 	host := strings.ToLower(strings.Split(parsedURI.Host, ":")[0])
 	return fmt.Sprintf("%s-%s-%v", uriType, host, h.Sum32()), nil
+}
+func getSecretsWithLabel(clientset kubernetes.Interface, label fields.Selector) (*apiv1.SecretList, error) {
+	fmt.Printf("Label: %s\n", label.String())
+	secrets, err := clientset.CoreV1().Secrets("").List(context.Background(), metav1.ListOptions{LabelSelector: label.String()})
+	if err != nil {
+		return nil, err
+	}
+
+	return secrets, nil
 }
